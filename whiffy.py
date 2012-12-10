@@ -24,18 +24,16 @@ def plot(bounds, done):
     ax.set_ylim(bounds.sw.lat, bounds.ne.lat)
     pylab.show()
 
+@cache_result
 def retrieve_uri(uri):
     sys.stderr.write(" (get: %s) " % uri)
     sys.stderr.flush()
     req = urllib.request.Request(uri)
     req.add_header('User-Agent', 'potd.py')
-    return urllib.request.urlopen(req)
-
-@cache_result
-def get_json_data(bbox):
-    uri = wrapper.get_uri(bbox)
-    fd = retrieve_uri(uri)
-    return fd.read()
+    fd = urllib.request.urlopen(req)
+    data = fd.read()
+    fd.close()
+    return data
 
 def next_or_none(it):
     try:
@@ -61,7 +59,7 @@ def wfs_bbox(bbox):
     return [ bbox.sw.lng, bbox.sw.lat, bbox.ne.lng, bbox.ne.lat ]
 
 def bbox_format(bbox):
-    return '%f,%f,%f,%f' % wfs_bbox(bbox)
+    return '%f,%f,%f,%f' % tuple(wfs_bbox(bbox))
 
 class WfsWrapper:
     def __init__(self, base_uri, typename):
@@ -97,6 +95,10 @@ class WfsWrapper:
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng), ne=LatLng(bbox.ne.lat, bbox.sw.lng + w/2)), 
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng + w/2), ne=LatLng(bbox.ne.lat, bbox.ne.lng)) ]
 
+        def get_json_data(bbox):
+            uri = self.get_uri(bbox)
+            return retrieve_uri(uri)
+
         def get_geom_data(bbox):
             json_data = get_json_data(bbox)
             try:
@@ -110,6 +112,7 @@ class WfsWrapper:
         # we split the bbox into four, and recurse (effectively)
         accepted = []
         queue = [(0, bounds)]
+        discarded = 0
         depth = 0
         while queue:
             pending = []
@@ -117,12 +120,14 @@ class WfsWrapper:
                 sys.stderr.write("[%d/%d @ %d :%d] %s" % (i, len(queue), depth, len(pending), str(bbox)))
                 sys.stderr.flush()
                 geom_data = get_geom_data(bbox)
-                sys.stderr.write(" -> %d\n" % (len(geom_data['features'])))
+                feat_len = len(geom_data['features'])
+                sys.stderr.write(" -> %d\n" % (feat_len))
                 sys.stderr.flush()
                 if acceptance_fn(geom_data):
                     accepted.append(bbox)
                 else:
                     pending += [(depth+1, t) for t in quad_split(bbox)]
+                    discarded += feat_len
                 del geom_data
             queue = pending
 
@@ -162,13 +167,18 @@ class WfsWrapper:
                         yield feature
                     else:
                         dups += 1
-            sys.stderr.write("output complete: written %d dups %d\n" % (written, dups))
+            sys.stderr.write("output complete: written %d dups %d discarded %d\n" % (written, dups, discarded))
             sys.stderr.flush()
         json_listout(sys.stdout, feature_output())
         sys.stdout.write('}\n')
 
+from config import wfs_servers
+
 if __name__ == '__main__':
-    wrapper = WfsWrapper('https://www2.landgate.wa.gov.au/ows/wfspublic_4283/wfs', 'WCORP-001')
-    wrapper.get_everything(BBox(ne=LatLng(-14, 129), sw=LatLng(-35, 112)), 
+    def floats(s):
+        return [float(t) for t in s.split(',')]
+    wfs_name, typename, latlng1, latlng2 = sys.argv[1:]
+    wrapper = WfsWrapper(wfs_servers[wfs_name], typename)
+    wrapper.get_everything(BBox(ne=LatLng(*floats(latlng1)), sw=LatLng(*floats(latlng2))), 
             lambda geom_data: len(geom_data['features']) < 5000)
 
