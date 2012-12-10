@@ -177,8 +177,9 @@ from config import wfs_servers
 if __name__ == '__main__':
     def floats(s):
         return [float(t) for t in s.split(',')]
-    wfs_name, typename, latlng1, latlng2 = sys.argv[1:]
+    wfs_name, typename, latlng1, latlng2, feature_limit = sys.argv[1:]
+    feature_limit = int(feature_limit)
     wrapper = WfsWrapper(wfs_servers[wfs_name], typename)
     wrapper.get_everything(BBox(ne=LatLng(*floats(latlng1)), sw=LatLng(*floats(latlng2))), 
-            lambda geom_data: len(geom_data['features']) < 5000)
+            lambda geom_data: len(geom_data['features']) < feature_limit)
 
