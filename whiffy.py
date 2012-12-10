@@ -12,7 +12,6 @@ LatLng = collections.namedtuple('LatLng', ('lat', 'lng'))
 BBox = collections.namedtuple('BBox', ('ne', 'sw'))
 
 def plot(bounds, done):
-    print("plotting recursion")
     import matplotlib.pylab as pylab
     ax = pylab.gca()
     for bbox in done:
@@ -72,6 +71,8 @@ class WfsWrapper:
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng), ne=LatLng(bbox.ne.lat, bbox.sw.lng + w/2)), 
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng + w/2), ne=LatLng(bbox.ne.lat, bbox.ne.lng)) ]
 
+        # go through and get our data. if we hit the query limit (acceptance function returns False)
+        # we split the bbox into four, and recurse (effectively)
         accepted = {}
         queue = [(0, bounds)]
         depth = 0
@@ -94,9 +95,41 @@ class WfsWrapper:
                 else:
                     pending += [(depth+1, t) for t in quad_split(bbox)]
             queue = pending
+
+        # debug plot of how the recursion worked
         plot(bounds, list(accepted.keys()))
+        # combine into one result, then return it (as GeoJSON)
+        combined = { }
+        combined['features'] = features = []
+        seen_uids = set()
+        dups = 0
+        for geom_data in accepted.values():
+            nfeat = len(geom_data['features'])
+            if nfeat == 0:
+                continue
+            for k, v in geom_data.items():
+                if k == 'features':
+                    for feat in v:
+                        uid = feat['properties']['gid']
+                        if uid not in seen_uids:
+                            seen_uids.add(uid)
+                            features.append(v)
+                        else:
+                            dups += 1
+                elif k == 'bbox':
+                    continue
+                else:
+                    if k in combined:
+                        assert(combined[k] == v)
+                    else:
+                        combined[k] = v
+        sys.stderr.write("done! dumping GeoJSON to stdout; %d geoms, %d dups (%.2f%%)\n" % 
+                (len(combined['features']), dups, 100. * len(combined['features']) / (dups+len(combined['features']))))
+        sys.stderr.flush()
+        json.dump(combined, sys.stdout)
 
 if __name__ == '__main__':
     wrapper = WfsWrapper('https://www2.landgate.wa.gov.au/ows/wfspublic_4283/wfs', 'WCORP-001')
     wrapper.get_everything(BBox(ne=LatLng(-14, 129), sw=LatLng(-35, 112)), 
             lambda geom_data: len(geom_data['features']) < 5000)
+
