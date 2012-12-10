@@ -37,6 +37,26 @@ def get_json_data(bbox):
     fd = retrieve_uri(uri)
     return fd.read()
 
+def next_or_none(it):
+    try:
+        return next(it)
+    except StopIteration:
+        return None
+
+def json_listout(fd, it):
+    fd.write('[')
+    pending = next_or_none(it)
+    while pending is not None:
+        next_obj = next_or_none(it)
+        if pending is not None:
+            json.dump(pending, fd)
+        if next_obj is not None:
+            fd.write(', \n')
+        pending = next_obj
+        if pending is None:
+            break
+    fd.write(']\n')
+
 class WfsWrapper:
     def __init__(self, base_uri, typename):
         self.base_uri = base_uri
@@ -71,9 +91,18 @@ class WfsWrapper:
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng), ne=LatLng(bbox.ne.lat, bbox.sw.lng + w/2)), 
                      BBox(sw=LatLng(bbox.sw.lat + h/2, bbox.sw.lng + w/2), ne=LatLng(bbox.ne.lat, bbox.ne.lng)) ]
 
+        def get_geom_data(bbox):
+            json_data = get_json_data(bbox)
+            try:
+                return json.loads(json_data.decode('utf8'))
+            except ValueError:
+                sys.stderr.write("Invalid data:", json_data)
+                sys.stderr.flush()
+                raise
+
         # go through and get our data. if we hit the query limit (acceptance function returns False)
         # we split the bbox into four, and recurse (effectively)
-        accepted = {}
+        accepted = []
         queue = [(0, bounds)]
         depth = 0
         while queue:
@@ -81,48 +110,45 @@ class WfsWrapper:
             for i, (depth, bbox) in enumerate(queue):
                 sys.stderr.write("[%d/%d @ %d :%d] %s" % (i, len(queue), depth, len(pending), str(bbox)))
                 sys.stderr.flush()
-                json_data = get_json_data(bbox)
-                try:
-                    geom_data = json.loads(json_data.decode('utf8'))
-                except ValueError:
-                    sys.stderr.write("Invalid data:", json_data)
-                    sys.stderr.flush()
-                    raise
+                geom_data = get_geom_data(bbox)
                 sys.stderr.write(" -> %d\n" % (len(geom_data['features'])))
                 sys.stderr.flush()
                 if acceptance_fn(geom_data):
-                    accepted[bbox] = geom_data
+                    accepted.append(bbox)
                 else:
                     pending += [(depth+1, t) for t in quad_split(bbox)]
+                del geom_data
             queue = pending
 
         # debug plot of how the recursion worked
-        plot(bounds, list(accepted.keys()))
+        plot(bounds, accepted)
         # combine into one result, then return it (as GeoJSON)
         combined = { }
         combined['features'] = features = []
         seen_uids = set()
         dups = 0
-        for geom_data in accepted.values():
-            nfeat = len(geom_data['features'])
-            if nfeat == 0:
-                continue
-            for k, v in geom_data.items():
-                if k == 'features':
-                    for feat in v:
-                        uid = feat['properties']['gid']
-                        if uid not in seen_uids:
-                            seen_uids.add(uid)
-                            features.append(v)
-                        else:
-                            dups += 1
-                elif k == 'bbox':
-                    continue
-                else:
-                    if k in combined:
-                        assert(combined[k] == v)
-                    else:
-                        combined[k] = v
+        for bbox in accepted:
+            print(bbox)
+#        for geom_data in accepted.values():
+#            nfeat = len(geom_data['features'])
+#            if nfeat == 0:
+#                continue
+#            for k, v in geom_data.items():
+#                if k == 'features':
+#                    for feat in v:
+#                        uid = feat['properties']['gid']
+#                        if uid not in seen_uids:
+#                            seen_uids.add(uid)
+#                            features.append(v)
+#                        else:
+#                            dups += 1
+#                elif k == 'bbox':
+#                    continue
+#                else:
+#                    if k in combined:
+#                        assert(combined[k] == v)
+#                    else:
+#                        combined[k] = v
         sys.stderr.write("done! dumping GeoJSON to stdout; %d geoms, %d dups (%.2f%%)\n" % 
                 (len(combined['features']), dups, 100. * len(combined['features']) / (dups+len(combined['features']))))
         sys.stderr.flush()
