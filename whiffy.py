@@ -57,6 +57,12 @@ def json_listout(fd, it):
             break
     fd.write(']\n')
 
+def wfs_bbox(bbox):
+    return [ bbox.sw.lng, bbox.sw.lat, bbox.ne.lng, bbox.ne.lat ]
+
+def bbox_format(bbox):
+    return '%f,%f,%f,%f' % wfs_bbox(bbox)
+
 class WfsWrapper:
     def __init__(self, base_uri, typename):
         self.base_uri = base_uri
@@ -70,7 +76,7 @@ class WfsWrapper:
     def get_uri(self, bbox=None):
         params = self.params.copy()
         if bbox is not None:
-            params['bbox'] = '%f,%f,%f,%f' % (bbox.sw.lng, bbox.sw.lat, bbox.ne.lng, bbox.ne.lat)
+            params['bbox'] = bbox_format(bbox)
         parts = []
         parts.append(self.base_uri)
         parts.append("?")
@@ -121,38 +127,45 @@ class WfsWrapper:
             queue = pending
 
         # debug plot of how the recursion worked
-        plot(bounds, accepted)
         # combine into one result, then return it (as GeoJSON)
-        combined = { }
-        combined['features'] = features = []
+        plot(bounds, accepted)
         seen_uids = set()
-        dups = 0
-        for bbox in accepted:
-            print(bbox)
-#        for geom_data in accepted.values():
-#            nfeat = len(geom_data['features'])
-#            if nfeat == 0:
-#                continue
-#            for k, v in geom_data.items():
-#                if k == 'features':
-#                    for feat in v:
-#                        uid = feat['properties']['gid']
-#                        if uid not in seen_uids:
-#                            seen_uids.add(uid)
-#                            features.append(v)
-#                        else:
-#                            dups += 1
-#                elif k == 'bbox':
-#                    continue
-#                else:
-#                    if k in combined:
-#                        assert(combined[k] == v)
-#                    else:
-#                        combined[k] = v
-        sys.stderr.write("done! dumping GeoJSON to stdout; %d geoms, %d dups (%.2f%%)\n" % 
-                (len(combined['features']), dups, 100. * len(combined['features']) / (dups+len(combined['features']))))
-        sys.stderr.flush()
-        json.dump(combined, sys.stdout)
+        # grab the dictionary for the first item
+        geom_data = get_geom_data(accepted[0])
+        initial_dict = {}
+        for k, v in geom_data.items():
+            if k == 'features':
+                continue
+            elif k == 'bbox':
+                v = wfs_bbox(bounds)
+            initial_dict[k] = v
+        initial_str = json.dumps(initial_dict)
+        assert(initial_str.endswith('}'))
+        sys.stdout.write(initial_str[:-1])
+        sys.stdout.write(', "features": ')
+        def feature_output():
+            written = 0
+            dups = 0
+            for bbox in accepted:
+                geom_data = get_geom_data(bbox)
+                features = geom_data['features']
+                if len(features) == 0:
+                    continue
+                for feature in features:
+                    uid = feature['properties']['gid']
+                    if uid not in seen_uids:
+                        seen_uids.add(uid)
+                        written += 1
+                        if written % 1000 == 0:
+                            sys.stderr.write("!")
+                            sys.stderr.flush()
+                        yield feature
+                    else:
+                        dups += 1
+            sys.stderr.write("output complete: written %d dups %d\n" % (written, dups))
+            sys.stderr.flush()
+        json_listout(sys.stdout, feature_output())
+        sys.stdout.write('}\n')
 
 if __name__ == '__main__':
     wrapper = WfsWrapper('https://www2.landgate.wa.gov.au/ows/wfspublic_4283/wfs', 'WCORP-001')
