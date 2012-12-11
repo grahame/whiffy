@@ -6,7 +6,6 @@
 
 import sys, collections, urllib.request, urllib.parse, json, sys
 from functioncache import cache_result
-from pprint import pprint
 
 LatLng = collections.namedtuple('LatLng', ('lat', 'lng'))
 BBox = collections.namedtuple('BBox', ('ne', 'sw'))
