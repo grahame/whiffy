@@ -103,7 +103,7 @@ class WfsWrapper:
             try:
                 return json.loads(json_data.decode('utf8'))
             except ValueError:
-                sys.stderr.write("Invalid data:", json_data)
+                sys.stderr.write("Invalid data: %s" % (json_data))
                 sys.stderr.flush()
                 raise
 
@@ -132,7 +132,7 @@ class WfsWrapper:
 
         # debug plot of how the recursion worked
         # combine into one result, then return it (as GeoJSON)
-        plot(bounds, accepted)
+        #### plot(bounds, accepted)
         seen_uids = set()
         # grab the dictionary for the first item
         geom_data = get_geom_data(accepted[0])
